@@ -122,7 +122,7 @@ void CalcMesh::snapshot(unsigned int snap_number) {
         unstructuredGrid->InsertNextCell(tetra->GetCellType(), tetra->GetPointIds());
     }
 
-    std::string fileName = "jet-step-" + std::to_string(snap_number) + ".vtu";
+    std::string fileName = "wing-step-" + std::to_string(snap_number) + ".vtu";
     vtkSmartPointer<vtkXMLUnstructuredGridWriter> writer = vtkSmartPointer<vtkXMLUnstructuredGridWriter>::New();
     writer->SetFileName(fileName.c_str());
     writer->SetInputData(unstructuredGrid);

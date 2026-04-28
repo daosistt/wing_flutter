@@ -7,16 +7,17 @@ int main(int argc, char **argv)
 {
     gmsh::initialize();
 
-    gmsh::model::add("ellipse");
+    gmsh::model::add("ellipse_3d");
 
-    double lc = 1e-1;
+    double lc = 0.2;
     double a  = 2.0;   // большая полуось (по x)
     double b  = 1.0;   // малая полуось (по y)
+    double thickness = 0.1;  // небольшая толщина (по z)
 
     // Центр
     gmsh::model::geo::addPoint(0.0,  0.0, 0.0, lc, 1);
 
-    // Точки на эллипсе (для дуг) - вершины эллипса
+    // Точки на эллипсе - вершины эллипса
     gmsh::model::geo::addPoint( a,   0.0, 0.0, lc, 2);  // правая вершина
     gmsh::model::geo::addPoint( 0.0,  b,  0.0, lc, 3);  // верхняя вершина
     gmsh::model::geo::addPoint(-a,   0.0, 0.0, lc, 4);  // левая вершина
@@ -33,15 +34,17 @@ int main(int argc, char **argv)
 
     gmsh::model::geo::synchronize();
 
-    // Граница (для BC Дирихле)
-    gmsh::model::addPhysicalGroup(1, {1, 2, 3, 4}, 1);
-    gmsh::model::setPhysicalName(1, 1, "boundary");
+    // Выдавливаем поверхность вдоль z на толщину thickness
+    std::vector<std::pair<int, int>> outDimTags;
+    gmsh::model::geo::extrude({{2, 1}}, 0, 0, thickness, outDimTags);
 
-    // Объём (поверхность)
-    gmsh::model::addPhysicalGroup(2, {1}, 2);
-    gmsh::model::setPhysicalName(2, 2, "domain");
+    gmsh::model::geo::synchronize();
 
-    gmsh::model::mesh::generate(2);
+    // Физические группы
+    gmsh::model::addPhysicalGroup(3, {1}, 1);
+    gmsh::model::setPhysicalName(3, 1, "volume");
+
+    gmsh::model::mesh::generate(3);
 
     gmsh::write("ellipse.msh");
 

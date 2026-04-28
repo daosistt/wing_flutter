@@ -7,7 +7,7 @@
 #include "CalcMesh.h"
 
 int main() {
-    const unsigned int GMSH_TRIANGLE_CODE = 2;  // вместо GMSH_TETR_CODE = 4
+    const unsigned int GMSH_TETR_CODE = 4;
 
     gmsh::initialize();
     gmsh::model::add("ellipse_model");
@@ -26,60 +26,66 @@ int main() {
     std::vector<double> parametricCoord;
     gmsh::model::mesh::getNodes(nodeTags, nodesCoord, parametricCoord);
 
-    // И данные об элементах сетки - ищем треугольники
-    std::vector<std::size_t>* trianglesNodesTags = nullptr;
+    // И данные об элементах сетки - ищем тетраэдры
+    std::vector<std::size_t>* tetrsNodesTags = nullptr;
     std::vector<int> elementTypes;
     std::vector<std::vector<std::size_t>> elementTags;
     std::vector<std::vector<std::size_t>> elementNodeTags;
     gmsh::model::mesh::getElements(elementTypes, elementTags, elementNodeTags);
     for(unsigned int i = 0; i < elementTypes.size(); i++) {
-        if(elementTypes[i] != GMSH_TRIANGLE_CODE)
+        if(elementTypes[i] != GMSH_TETR_CODE)
             continue;
-        trianglesNodesTags = &elementNodeTags[i];
+        tetrsNodesTags = &elementNodeTags[i];
     }
 
-    if(trianglesNodesTags == nullptr) {
-        std::cout << "Can not find triangle data. Exiting." << std::endl;
+    if(tetrsNodesTags == nullptr) {
+        std::cout << "Can not find tetra data. Exiting." << std::endl;
         gmsh::finalize();
         return -2;
     }
 
     std::cout << "The model has " << nodeTags.size() << " nodes and " 
-              << trianglesNodesTags->size() / 3 << " triangles." << std::endl;
+              << tetrsNodesTags->size() / 4 << " tetrs." << std::endl;
 
     // Проверим, что номера узлов идут подряд
     for(unsigned int i = 0; i < nodeTags.size(); ++i) {
         assert(i == nodeTags[i] - 1);
     }
-    assert(trianglesNodesTags->size() % 3 == 0);  // 3 вершины на треугольник
+    assert(tetrsNodesTags->size() % 4 == 0);
 
-    CalcMesh mesh(nodesCoord, *trianglesNodesTags);
+    CalcMesh mesh(nodesCoord, *tetrsNodesTags);
 
     // Параметры эллипса:
     // a = 2.0 - большая полуось (по x)
     // b = 1.0 - малая полуось (по y)
-    // Вращение вокруг малой полуоси (ось y)
+    // Колебания: вращение вокруг оси y с переменной угловой скоростью
     
-    double angular_velocity = 2 * M_PI;  // полный оборот за 1 секунду
+    double amplitude = 0.2 * M_PI;      // амплитуда угловой скорости
+    double frequency = 0.5;           // частота колебаний (Гц)
+    
+    // Функция угловой скорости от времени (синусоидальные колебания)
+    auto omega = [amplitude, frequency](double t) -> double {
+        return amplitude * sin(2 * M_PI * frequency * t);
+    };
 
     mesh.setVelocities(
-        // v_x: вращение вокруг y
-        [angular_velocity](double x, double y, double z, double t) {
-            return -angular_velocity * z;
+        // v_x: зависит от угловой скорости в момент t
+        [omega](double x, double y, double z, double t) {
+            return -omega(t) * z;
         },
-        // v_y: не меняется при вращении вокруг y
+        // v_y: не меняется
         [](double x, double y, double z, double t) {
             return 0.0;
         },
-        // v_z: вращение вокруг y
-        [angular_velocity](double x, double y, double z, double t) {
-            return angular_velocity * x;
+        // v_z: зависит от угловой скорости в момент t
+        [omega](double x, double y, double z, double t) {
+            return omega(t) * x;
         }
     );
 
     mesh.setAngularVelocity(
         [](double t) { return 0.0; },
-        [angular_velocity](double t) { return angular_velocity; },
+        omega,
         [](double t) { return 0.0; }
     );
 
