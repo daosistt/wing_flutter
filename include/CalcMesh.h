@@ -5,7 +5,6 @@
 #include <string>
 #include "CalcNode.h"
 #include "Element.h"
-#include <functional>
 
 /**
  * struct CenterOfMass - Состояние центра масс сетки
@@ -18,19 +17,12 @@
  * @yaw: Угол рыскания (вращение вокруг Z) в радианах
  * @pitch: Угол тангажа (вращение вокруг Y) в радианах
  * @roll: Угол крена (вращение вокруг X) в радианах
- * @yaw_rate_func: Функция, возвращающая угловую скорость рыскания в момент времени
- * @pitch_rate_func: Функция, возвращающая угловую скорость тангажа в момент времени
- * @roll_rate_func: Функция, возвращающая угловую скорость крена в момент времени
  */
 struct CenterOfMass {
     double centerX, centerY, centerZ;
     double vx, vy, vz;
     
     double yaw, pitch, roll;
-   
-    std::function<double(double)> yaw_rate_func;
-    std::function<double(double)> pitch_rate_func;
-    std::function<double(double)> roll_rate_func;
 
     CenterOfMass() 
         : centerX(0.0), centerY(0.0), centerZ(0.0)
@@ -55,11 +47,21 @@ class CalcMesh {
     double currentTime;             /**< Текущее время моделирования */
 
     CenterOfMass com;               /**< Состояние центра масс */
+    double hingeX, hingeY, hingeZ;   /**< Неподвижная точка подвеса */
+    double angle;                    /**< Угол поворота в плоскости XY вокруг оси Z */
+    double angularVelocity;          /**< Угловая скорость вокруг оси Z */
+    double lastTorque;               /**< Момент аэродинамических сил вокруг подвеса */
+    double inertiaZ;                 /**< Момент инерции относительно подвеса */
+    double bodyMass;                 /**< Масса жёсткого тела в безразмерной модели */
+    double nodeArea;                 /**< Эффективная площадь, отнесённая к одному узлу */
+    double windVx, windVy, windVz;   /**< Скорость ветра */
+    double airDensity;               /**< Плотность воздуха */
+    double dragCoefficient;          /**< Коэффициент сопротивления */
+    double angularDamping;           /**< Вязкое демпфирование вращения */
+    double referenceArea;            /**< Характерная площадь обдува */
 
-    /** Функции поля скоростей (зависят от положения и времени) */
-    std::function<double(double,double,double,double)> vxFunc;
-    std::function<double(double,double,double,double)> vyFunc;
-    std::function<double(double,double,double,double)> vzFunc;
+    void updateKinematics();
+    void updateAerodynamicFields();
 
   public:
     /**
@@ -80,33 +82,18 @@ class CalcMesh {
      * @snap_number: Номер состояния (используется в имени файла)
      */
     void snapshot(unsigned int snap_number);
-
-    /**
-     * setVelocities - Задать функции поля скоростей
-     * @fx: Функция, возвращающая vx(x,y,z,t)
-     * @fy: Функция, возвращающая vy(x,y,z,t)
-     * @fz: Функция, возвращающая vz(x,y,z,t)
-     */
-    void setVelocities(std::function<double(double,double,double,double)> fx,
-                       std::function<double(double,double,double,double)> fy,
-                       std::function<double(double,double,double,double)> fz);
+    void writePvd(const std::string& filename, unsigned int snapshots, double tau) const;
+    void configureWindFlutter(double windVx,
+                              double windVy,
+                              double initialAngle,
+                              double airDensity,
+                              double dragCoefficient,
+                              double angularDamping);
 
     /**
      * updateCenterOfMass - Пересчитать положение центра масс
      */
     void updateCenterOfMass();
-
-    /**
-     * setAngularVelocity - Задать функции угловых скоростей
-     * @yaw_rate: Функция, возвращающая угловую скорость рыскания (вокруг Z)
-     * @pitch_rate: Функция, возвращающая угловую скорость тангажа (вокруг Y)
-     * @roll_rate: Функция, возвращающая угловую скорость крена (вокруг X)
-     */
-    void setAngularVelocity(
-        std::function<double(double)> yaw_rate,
-        std::function<double(double)> pitch_rate,
-        std::function<double(double)> roll_rate
-    );
 };
 
 #endif // CALC_MESH_H

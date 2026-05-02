@@ -55,48 +55,29 @@ int main() {
 
     CalcMesh mesh(nodesCoord, *tetrsNodesTags);
 
-    // Параметры эллипса:
-    // a = 2.0 - большая полуось (по x)
-    // b = 1.0 - малая полуось (по y)
-    // Колебания: вращение вокруг оси y с переменной угловой скоростью
-    
-    double amplitude = 0.2 * M_PI;      // амплитуда угловой скорости
-    double frequency = 0.5;           // частота колебаний (Гц)
-    
-    // Функция угловой скорости от времени (синусоидальные колебания)
-    auto omega = [amplitude, frequency](double t) -> double {
-        return amplitude * sin(2 * M_PI * frequency * t);
-    };
-
-    mesh.setVelocities(
-        // v_x: зависит от угловой скорости в момент t
-        [omega](double x, double y, double z, double t) {
-            return -omega(t) * z;
-        },
-        // v_y: не меняется
-        [](double x, double y, double z, double t) {
-            return 0.0;
-        },
-        // v_z: зависит от угловой скорости в момент t
-        [omega](double x, double y, double z, double t) {
-            return omega(t) * x;
-        }
-    );
-
-    mesh.setAngularVelocity(
-        [](double t) { return 0.0; },
-        omega,
-        [](double t) { return 0.0; }
-    );
-
     gmsh::finalize();
 
+    // Reduced-order FSI model:
+    // The wind is directed along +Y, perpendicular to the initial major axis.
+    // The body is hinged at the rightmost point of the major semi-axis and
+    // rotates in the XY plane around the Z axis.
+    const double windVx = 0.0;
+    const double windVy = 8.0;
+    const double initialAngle = 0.0;
+    const double airDensity = 1.225;
+    const double dragCoefficient = 1.15;
+    const double angularDamping = 0.04;
+    mesh.configureWindFlutter(windVx, windVy, initialAngle,
+                              airDensity, dragCoefficient, angularDamping);
+
     mesh.snapshot(0);
-    double tau = 0.01;
-    for(unsigned int step = 1; step < 151; step++) {
+    const double tau = 0.01;
+    const unsigned int steps = 300;
+    for(unsigned int step = 1; step <= steps; step++) {
         mesh.doTimeStep(tau);
         mesh.snapshot(step);
     }
+    mesh.writePvd("wing.pvd", steps + 1, tau);
 
     return 0;
 }
