@@ -4,20 +4,19 @@ project(WingMesh)
 set(CMAKE_CXX_STANDARD 11)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-set(VTK_LIBRARIES
-    vtkCommonCore
-    vtkCommonDataModel
-    vtkIOCore
-    vtkIOXML
-    vtksys
+# GMSH
+add_library(gmsh SHARED IMPORTED)
+set_target_properties(gmsh PROPERTIES
+    IMPORTED_LOCATION "/opt/homebrew/lib/libgmsh.dylib"
+    INTERFACE_INCLUDE_DIRECTORIES "/opt/homebrew/include"
 )
 
-set(GMSH_LIBRARIES gmsh)
+# VTK
+find_package(VTK REQUIRED)
 
 include_directories(
     ${CMAKE_CURRENT_SOURCE_DIR}/include
     ${VTK_INCLUDE_DIRS}
-    ${GMSH_INCLUDE_DIRS}
 )
 
 add_library(mesh_lib
@@ -26,9 +25,13 @@ add_library(mesh_lib
     src/MeshLoader.cpp
 )
 
-# Создаем исполняемый файл
 add_executable(mv_wing src/main.cpp)
 
-# Линкуем библиотеки
-target_link_libraries(mesh_lib ${VTK_LIBRARIES})
-target_link_libraries(mv_wing mesh_lib ${GMSH_LIBRARIES})
+target_link_libraries(mesh_lib
+    ${VTK_LIBRARIES}
+    gmsh
+)
+
+target_link_libraries(mv_wing
+    mesh_lib
+)
