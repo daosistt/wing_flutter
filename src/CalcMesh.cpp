@@ -20,13 +20,25 @@ double sqr(double value) {
 }
 }
 
-CalcMesh::CalcMesh(const std::vector<double>& nodesCoords, const std::vector<std::size_t>& tetrsPoints)
+CalcMesh::CalcMesh(const std::vector<double>& nodesCoords,
+                   const std::vector<std::size_t>& tetrsPoints)
     : currentTime(0.0),
       hingeX(0.0), hingeY(0.0), hingeZ(0.0),
+
       angle(0.0), angularVelocity(0.0), lastTorque(0.0),
       inertiaZ(1.0), bodyMass(1.0), nodeArea(1.0),
-      windVx(0.0), windVy(8.0), windVz(0.0), airDensity(1.225), dragCoefficient(1.15),
-      angularDamping(0.35), referenceArea(0.0) {
+
+      windVx(0.0), windVy(8.0), windVz(0.0),
+      airDensity(1.225), dragCoefficient(1.15),
+      angularDamping(0.35), referenceArea(0.0),
+
+      bendQ(0.0), bendQDot(0.0), bendQDDot(0.0),
+      bendMass(1.0), bendDamping(0.1), bendStiffness(10.0),
+      lastBendingForce(0.0),
+      wingSpanLength(1.0),
+      wingRootY(0.0),
+      wingTipY(0.0)
+    {
     nodes.resize(nodesCoords.size() / 3);
     for(unsigned int i = 0; i < nodesCoords.size() / 3; i++) {
         double pointX = nodesCoords[i*3];
@@ -49,9 +61,13 @@ CalcMesh::CalcMesh(const std::vector<double>& nodesCoords, const std::vector<std
         maxZ = std::max(maxZ, node.z);
     }
 
-    hingeX = maxX;
-    hingeY = 0.5 * (minY + maxY);
+    hingeX = 0.5 * (minX + maxX);
+    hingeY = maxY;
     hingeZ = 0.5 * (minZ + maxZ);
+
+    wingRootY = hingeY;
+    wingTipY = minY;
+    wingSpanLength = std::max(wingRootY - wingTipY, 1.0e-9);
 
     for (auto& node : nodes) {
         node.relX = node.x - hingeX;
@@ -85,30 +101,62 @@ CalcMesh::CalcMesh(const std::vector<double>& nodesCoords, const std::vector<std
     updateAerodynamicFields();
 }
 
-
-
-
 void CalcMesh::doTimeStep(double tau) {
+    /*
+     * 1. Считаем аэродинамические силы при текущем положении
+     *    и текущих скоростях узлов.
+     */
     updateAerodynamicFields();
 
-    const double alpha = (lastTorque - angularDamping * angularVelocity) / inertiaZ;
-    angularVelocity += alpha * tau;
-    angle += angularVelocity * tau;
+    /*
+     * 2. Уравнение одной изгибной степени свободы:
+     *
+     * bendMass * bendQDDot
+     * + bendDamping * bendQDot
+     * + bendStiffness * bendQ
+     * = lastBendingForce
+     */
+    bendQDDot =
+        (lastBendingForce
+         - bendDamping * bendQDot
+         - bendStiffness * bendQ)
+        / bendMass;
 
+    /*
+     * 3. Semi-implicit Euler:
+     *
+     * Сначала обновляем скорость,
+     * потом положение.
+     *
+     * Это устойчивее обычного явного Эйлера.
+     */
+    bendQDot += bendQDDot * tau;
+    bendQ    += bendQDot  * tau;
+
+    /*
+     * 4. Обновляем координаты узлов по новой амплитуде изгиба.
+     */
     updateKinematics();
+
+    /*
+     * 5. Пересчитываем силы для записи в VTK на новом положении.
+     */
     updateAerodynamicFields();
+
     currentTime += tau;
 }
 
 void CalcMesh::configureWindFlutter(double windVxValue,
                                     double windVyValue,
+                                    double windVzValue,
                                     double initialAngle,
                                     double airDensityValue,
                                     double dragCoefficientValue,
                                     double angularDampingValue) {
     windVx = windVxValue;
     windVy = windVyValue;
-    windVz = 0.0;
+    windVz = windVzValue;
+    // windVz = 0.0;
     angle = initialAngle;
     airDensity = airDensityValue;
     dragCoefficient = dragCoefficientValue;
@@ -119,37 +167,101 @@ void CalcMesh::configureWindFlutter(double windVxValue,
     updateAerodynamicFields();
 }
 
+void CalcMesh::configureWingBending(double initialBend,
+                                    double initialBendVelocity,
+                                    double bendMassValue,
+                                    double bendStiffnessValue,
+                                    double bendDampingValue) {
+    bendQ = initialBend;
+    bendQDot = initialBendVelocity;
+    bendQDDot = 0.0;
+
+    bendMass = std::max(bendMassValue, 1.0e-9);
+    bendStiffness = std::max(bendStiffnessValue, 0.0);
+    bendDamping = std::max(bendDampingValue, 0.0);
+
+    lastBendingForce = 0.0;
+
+    updateKinematics();
+    updateAerodynamicFields();
+}
+
+double CalcMesh::bendingShape(double relY) const {
+    /*
+     * relY = node.y0 - hingeY.
+     *
+     * Корень крыла:
+     *   relY = 0
+     *   xi = 0
+     *
+     * Свободный конец:
+     *   relY = -wingSpanLength
+     *   xi = 1
+     */
+
+    double xi = -relY / wingSpanLength;
+
+    xi = std::clamp(xi, 0.0, 1.0);
+
+    /*
+     * Консольная форма:
+     * phi(0) = 0  - у закрепления нет смещения
+     * phi'(0)= 0  - у закрепления нет поворота
+     * phi(1) = 1  - bendQ равен смещению свободного конца
+     */
+    return xi * xi * (3.0 - 2.0 * xi);
+}
+
 void CalcMesh::updateKinematics() {
-    const double c = std::cos(angle);
-    const double s = std::sin(angle);
+    com.centerX = 0.0;
+    com.centerY = 0.0;
+    com.centerZ = 0.0;
 
-    com.centerX = com.centerY = com.centerZ = 0.0;
-    for(auto& node : nodes) {
-        const double rx = node.relX * c - node.relY * s;
-        const double ry = node.relX * s + node.relY * c;
+    for (auto& node : nodes) {
+        const double phi = bendingShape(node.relY);
 
-        node.x = hingeX + rx;
-        node.y = hingeY + ry;
-        node.z = hingeZ + node.relZ;
-        node.vx = -angularVelocity * ry;
-        node.vy = angularVelocity * rx;
-        node.vz = 0.0;
+        /*
+         * X не меняем:
+         * вдоль X дует ветер.
+         */
+        node.x = hingeX + node.relX;
+
+        /*
+         * Y не меняем:
+         * вдоль Y расположен размах крыла.
+         */
+        node.y = hingeY + node.relY;
+
+        /*
+         * Z меняем:
+         * это вертикальный изгиб крыла.
+         */
+        node.z = hingeZ + node.relZ + bendQ * phi;
+
+        /*
+         * Скорость узла появляется только по Z,
+         * потому что bendQ зависит от времени.
+         */
+        node.vx = 0.0;
+        node.vy = 0.0;
+        node.vz = bendQDot * phi;
 
         com.centerX += node.x;
         com.centerY += node.y;
         com.centerZ += node.z;
     }
-    com.centerX /= nodes.size();
-    com.centerY /= nodes.size();
-    com.centerZ /= nodes.size();
-    com.yaw = angle;
-    com.vx = -angularVelocity * (com.centerY - hingeY);
-    com.vy = angularVelocity * (com.centerX - hingeX);
-    com.vz = 0.0;
+
+    const double invN = 1.0 / static_cast<double>(nodes.size());
+
+    com.centerX *= invN;
+    com.centerY *= invN;
+    com.centerZ *= invN;
 }
 
 void CalcMesh::updateAerodynamicFields() {
     lastTorque = 0.0;
+    lastBendingForce = 0.0;
+
     const double windNorm = std::sqrt(sqr(windVx) + sqr(windVy) + sqr(windVz));
     const double windDirX = windNorm > 1.0e-9 ? windVx / windNorm : 0.0;
     const double windDirY = windNorm > 1.0e-9 ? windVy / windNorm : 0.0;
@@ -178,6 +290,20 @@ void CalcMesh::updateAerodynamicFields() {
         node.fx = dragCoefficient * localPressure * nodeArea * relFlowX * invSpeed;
         node.fy = dragCoefficient * localPressure * nodeArea * relFlowY * invSpeed;
         node.fz = dragCoefficient * localPressure * nodeArea * relFlowZ * invSpeed;
+
+        const double phi = bendingShape(node.relY);
+
+        /*
+        * Обобщенная сила изгиба:
+        *
+        * z_i = z0_i + bendQ * phi_i
+        *
+        * dz_i / d(bendQ) = phi_i
+        *
+        * Поэтому:
+        * Q = sum(Fz_i * phi_i)
+        */
+        lastBendingForce += node.fz * phi;
 
         const double rx = node.x - hingeX;
         const double ry = node.y - hingeY;
@@ -243,8 +369,8 @@ void CalcMesh::snapshot(unsigned int snap_number) {
     auto stateArray = vtkSmartPointer<vtkDoubleArray>::New();
     stateArray->SetName("body_state");
     stateArray->SetNumberOfComponents(3);
-    double state[3] = {angle, angularVelocity, lastTorque};
-    stateArray->InsertNextTuple(state);
+    // double state[3] = {angle, angularVelocity, lastTorque};
+    // stateArray->InsertNextTuple(state);
     unstructuredGrid->GetFieldData()->AddArray(stateArray);
 
     for(unsigned int i = 0; i < elements.size(); i++) {

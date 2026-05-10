@@ -13,7 +13,8 @@ int main() {
     gmsh::model::add("ellipse_model");
 
     try {
-        gmsh::merge("../mesh/ellipse.msh");
+        // gmsh::merge("../mesh/ellipse.msh");
+        gmsh::merge("../mesh/wing_rounded_ellipse.msh");
     } catch(...) {
         gmsh::logger::write("Could not load MSH mesh: bye!");
         gmsh::finalize();
@@ -61,14 +62,28 @@ int main() {
     // The wind is directed along +Y, perpendicular to the initial major axis.
     // The body is hinged at the rightmost point of the major semi-axis and
     // rotates in the XY plane around the Z axis.
-    const double windVx = 0.0;
-    const double windVy = 8.0;
+    const double windVx = 8.0;
+    const double windVy = 0.0;
+    const double windVz = 8.0;
     const double initialAngle = 0.0;
     const double airDensity = 1.225;
     const double dragCoefficient = 1.15;
     const double angularDamping = 0.04;
-    mesh.configureWindFlutter(windVx, windVy, initialAngle,
+    mesh.configureWindFlutter(windVx, windVy, windVz, initialAngle,
                               airDensity, dragCoefficient, angularDamping);
+
+    const double initialBend = 0.0;
+    const double initialBendVelocity = 0.0;
+
+    const double bendMass = 0.25;
+    const double bendStiffness = 20.0;
+    const double bendDamping = 0.2;
+
+    mesh.configureWingBending(initialBend,
+                              initialBendVelocity,
+                              bendMass,
+                              bendStiffness,
+                              bendDamping);
 
     mesh.snapshot(0);
     const double tau = 0.01;

@@ -60,6 +60,17 @@ class CalcMesh {
     double angularDamping;           /**< Вязкое демпфирование вращения */
     double referenceArea;            /**< Характерная площадь обдува */
 
+    double bendQ;              /**< q - Обобщенная координата изгиба: вертикальное смещение свободного конца крыла вдоль оси Z */
+    double bendQDot;           /**< q' - Обобщенная скорость изгиба: скорость изменения bendQ */
+    double bendQDDot;          /**< q'' - Обобщенное ускорение изгиба: ускорение свободного конца крыла вдоль оси Z */
+    double bendMass;           /**< M - Эффективная масса изгибной формы, входит в M*q'' + C*q' + K*q = Q */
+    double bendDamping;        /**< C - Коэффициент механического демпфирования изгиба, входит в член C*q' */
+    double bendStiffness;      /**< K - Жесткость изгиба крыла, входит в член K*q */
+    double lastBendingForce;   /**< Q - Последняя вычисленная обобщенная аэродинамическая сила изгиба Q */
+    double wingSpanLength;     /**< L_wing - Длина крыла вдоль оси Y от закрепления до свободного края */
+    double wingRootY;          /**< Координата закрепленного корня крыла по оси Y */
+    double wingTipY;           /**< Координата свободного конца крыла по оси Y */
+
     void updateKinematics();
     void updateAerodynamicFields();
 
@@ -82,13 +93,46 @@ class CalcMesh {
      * @snap_number: Номер состояния (используется в имени файла)
      */
     void snapshot(unsigned int snap_number);
+
+    /**
+     * writePvd - создать Pvd-файл для VTK
+     * @filename: название файла
+     * @snapshots: 
+     * @tau: момент времени (в секундах __вероятно__)
+     */
     void writePvd(const std::string& filename, unsigned int snapshots, double tau) const;
+
+    /**
+     * writePvd - создать Pvd-файл для VTK
+     * @windVx: скорость ветра
+     * @windVy: угол при инициалиазации
+     * @airDensity: плотность воздуха
+     * @dragCoefficient: 
+     * @angularDamping: угловое демпфирование 
+     */
     void configureWindFlutter(double windVx,
                               double windVy,
+                              double windVz,
                               double initialAngle,
                               double airDensity,
                               double dragCoefficient,
                               double angularDamping);
+
+    /**
+     * @initialBend: начальный сдвиг
+     * @initialBendVelocity: начальная скорость сдвига
+     * @bendMassValue: 
+     * @bendStiffnessValue: жесткость
+     * @bendDampingValue: демпфирование
+     */
+    void configureWingBending(double initialBend,
+                          double initialBendVelocity,
+                          double bendMassValue,
+                          double bendStiffnessValue,
+                          double bendDampingValue);
+
+      /**< Функция формы изгиба крыла вдоль оси Y */
+      double bendingShape(double relY) const; 
 
     /**
      * updateCenterOfMass - Пересчитать положение центра масс
