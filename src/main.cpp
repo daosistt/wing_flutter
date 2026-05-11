@@ -63,9 +63,9 @@ int main() {
     // The body is hinged at the rightmost point of the major semi-axis and
     // rotates in the XY plane around the Z axis.
     // ВЕТЕР
-    const double windVx = 10.0;
+    const double windVx = 20.0;
     const double windVy = 0.0;
-    const double windVz = 3.0;
+    const double windVz = 0.0;
     const double initialAngle = 0.0;
     const double airDensity = 1.225;
     const double dragCoefficient = 1.15;
@@ -73,13 +73,20 @@ int main() {
     mesh.configureWindFlutter(windVx, windVy, windVz, initialAngle,
                               airDensity, dragCoefficient, angularDamping);
 
+    const double liftSlope = 10;
+    const double maxAlphaEff = 0.35;
+    mesh.configureFlutterAerodynamics(liftSlope, maxAlphaEff);
+
+    const double alphataulag = 0.015;
+    mesh.configureAeroLag(false, alphataulag);
+
     // СДВИГ
-    const double initialBend = 0.0;
+    const double initialBend = 0.1;
     const double initialBendVelocity = 0.0;
 
     const double bendMass = 0.25;
-    const double bendStiffness = 75.0;
-    const double bendDamping = 0.2;
+    const double bendStiffness = 40.0;
+    const double bendDamping = 0.001;
 
     mesh.configureWingBending(initialBend,
                               initialBendVelocity,
@@ -87,12 +94,12 @@ int main() {
                               bendStiffness,
                               bendDamping);
     // КРУЧЕНИЕ
-    const double initialTorsion = 0.0;
+    const double initialTorsion = 0.01;
     const double initialTorsionVelocity = 0.0;
 
-    const double torsionInertia = 0.05;
-    const double torsionStiffness = 80.0;
-    const double torsionDamping = 1.5;
+    const double torsionInertia = 0.01;
+    const double torsionStiffness = 100;
+    const double torsionDamping = 0.9;
 
     mesh.configureWingTorsion(initialTorsion,
                             initialTorsionVelocity,
@@ -111,10 +118,12 @@ int main() {
 
 
     mesh.snapshot(0);
-    const double tau = 0.01;
-    const unsigned int steps = 300;
+    const double tau = 0.002;
+
+    mesh.configureTau(tau);
+    const unsigned int steps = 3000;
     for(unsigned int step = 1; step <= steps; step++) {
-        mesh.doTimeStep(tau);
+        mesh.doTimeStep();
         mesh.snapshot(step);
     }
     mesh.writePvd("wing.pvd", steps + 1, tau);

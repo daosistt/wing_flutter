@@ -46,6 +46,7 @@ class CalcMesh {
     std::vector<Element> elements;  /**< Тетраэдральные элементы */
     std::vector<double> elementEquivalentStress; /**< Эквивалентное напряжение von Mises для каждого тетраэдра */
     double currentTime;             /**< Текущее время моделирования */
+    double tau;
 
     CenterOfMass com;               /**< Состояние центра масс */
     double hingeX, hingeY, hingeZ;   /**< Неподвижная точка подвеса */
@@ -58,8 +59,15 @@ class CalcMesh {
     double windVx, windVy, windVz;   /**< Скорость ветра */
     double airDensity;               /**< Плотность воздуха */
     double dragCoefficient;          /**< Коэффициент сопротивления */
+    double liftSlope;                /**<  C_L_alpha, для тонкого профиля примерно 2*pi */
+    double chordLength;              /**<  хорда крыла по X */
+    double aeroCenterX;              /**<  центр давления / aerodynamic center */
+    double maxAlphaEff;              /**<  ограничение угла атаки, рад */
     double angularDamping;           /**< Вязкое демпфирование вращения */
     double referenceArea;            /**< Характерная площадь обдува */
+    double alphaLagTau;              /**< время запаздывания аэродинамики */ 
+    bool useAeroLag;                 /**< Включено ли учитывание запаздывание */
+      
 
     double bendQ;              /**< q - Обобщенная координата изгиба: вертикальное смещение свободного конца крыла вдоль оси Z */
     double bendQDot;           /**< q' - Обобщенная скорость изгиба: скорость изменения bendQ */
@@ -105,9 +113,8 @@ class CalcMesh {
 
     /**
      * doTimeStep - Выполнить один шаг интегрирования по времени
-     * @tau: Величина шага по времени (дельта t)
      */
-    void doTimeStep(double tau);
+    void doTimeStep();
 
     /**
      * snapshot - Сохранить текущее состояние сетки в VTK-файл
@@ -122,6 +129,8 @@ class CalcMesh {
      * @tau: момент времени (в секундах __вероятно__)
      */
     void writePvd(const std::string& filename, unsigned int snapshots, double tau) const;
+
+    void configureTau(const double tau);
 
     /**
      * writePvd - создать Pvd-файл для VTK
@@ -138,6 +147,16 @@ class CalcMesh {
                               double airDensity,
                               double dragCoefficient,
                               double angularDamping);
+
+    /**
+     * configureFlutterAerodynamics - конфигурация аэродинамики флаттера
+     * @liftSlopeValue:
+     * @maxAlphaEffValue: максимальный эффективный угол крыла
+     */
+    void configureFlutterAerodynamics(double liftSlopeValue,
+                                   double maxAlphaEffValue);
+
+    void configureAeroLag(bool enabled, double angleTauLag);
 
     /**
      * @initialBend: начальный сдвиг

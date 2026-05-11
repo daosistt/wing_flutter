@@ -24,7 +24,7 @@ double sqr(double value) {
 
 CalcMesh::CalcMesh(const std::vector<double>& nodesCoords,
                    const std::vector<std::size_t>& tetrsPoints)
-    : currentTime(0.0),
+    : currentTime(0.0), tau(0.001),
       hingeX(0.0), hingeY(0.0), hingeZ(0.0),
 
       angle(0.0), angularVelocity(0.0), lastTorque(0.0),
@@ -32,7 +32,9 @@ CalcMesh::CalcMesh(const std::vector<double>& nodesCoords,
 
       windVx(0.0), windVy(8.0), windVz(0.0),
       airDensity(1.225), dragCoefficient(1.15),
+      liftSlope(2.0 * PI), chordLength(1.0), aeroCenterX(0.0), maxAlphaEff(0.35),
       angularDamping(0.35), referenceArea(0.0),
+      alphaLagTau(0.015), useAeroLag(true),
 
       bendQ(0.0), bendQDot(0.0), bendQDDot(0.0),
       bendMass(1.0), bendDamping(0.1), bendStiffness(10.0),
@@ -71,6 +73,10 @@ CalcMesh::CalcMesh(const std::vector<double>& nodesCoords,
         minZ = std::min(minZ, node.z);
         maxZ = std::max(maxZ, node.z);
     }
+
+    chordLength = maxX - minX;
+    aeroCenterX = minX + 0.25 * chordLength;
+    torsionAxisX = minX + 0.5 * chordLength; // можно менять для достижения флаттера
 
     hingeX = 0.5 * (minX + maxX);
     hingeY = maxY;
@@ -115,7 +121,7 @@ CalcMesh::CalcMesh(const std::vector<double>& nodesCoords,
     updateAerodynamicFields();
 }
 
-void CalcMesh::doTimeStep(double tau) {
+void CalcMesh::doTimeStep() {
     /*
      * 1. Считаем аэродинамические силы при текущем положении
      *    и текущих скоростях узлов.
@@ -168,9 +174,11 @@ void CalcMesh::doTimeStep(double tau) {
      */
     updateStressFields();
 
-currentTime += tau;
-
     currentTime += tau;
+}
+
+void CalcMesh::configureTau(const double new_tau) {
+    tau = new_tau;
 }
 
 void CalcMesh::configureWindFlutter(double windVxValue,
@@ -192,6 +200,18 @@ void CalcMesh::configureWindFlutter(double windVxValue,
     currentTime = 0.0;
     updateKinematics();
     updateAerodynamicFields();
+}
+
+void CalcMesh::configureFlutterAerodynamics(double liftSlopeValue,
+                                            double maxAlphaEffValue) {
+    liftSlope = liftSlopeValue;
+    maxAlphaEff = maxAlphaEffValue;
+}
+
+void CalcMesh::configureAeroLag(bool enabled, double angleTauLag)
+{
+    useAeroLag = enabled;
+    alphaLagTau = std::max(angleTauLag, 1.0e-6);
 }
 
 void CalcMesh::configureWingBending(double initialBend,
@@ -479,87 +499,66 @@ void CalcMesh::updateKinematics() {
     com.centerZ *= invN;
 }
 
-void CalcMesh::updateAerodynamicFields() {
-    lastTorque = 0.0;
+void CalcMesh::updateAerodynamicFields()
+{
     lastBendingForce = 0.0;
     lastTorsionMoment = 0.0;
 
-    const double windNorm = std::sqrt(sqr(windVx) + sqr(windVy) + sqr(windVz));
-    const double windDirX = windNorm > 1.0e-9 ? windVx / windNorm : 0.0;
-    const double windDirY = windNorm > 1.0e-9 ? windVy / windNorm : 0.0;
-    double minProjection = nodes[0].x * windDirX + nodes[0].y * windDirY;
-    double maxProjection = minProjection;
-    for (const auto& node : nodes) {
-        const double projection = node.x * windDirX + node.y * windDirY;
-        minProjection = std::min(minProjection, projection);
-        maxProjection = std::max(maxProjection, projection);
-    }
-    const double invSpan = 1.0 / std::max(maxProjection - minProjection, 1.0e-9);
+    const double U = std::max(std::abs(windVx), 1.0e-6);
+    const double qDyn = 0.5 * airDensity * U * U;
 
-    for(auto& node : nodes) {
-        const double relFlowX = windVx - node.vx;
-        const double relFlowY = windVy - node.vy;
-        const double relFlowZ = windVz - node.vz;
-        const double relSpeed = std::sqrt(sqr(relFlowX) + sqr(relFlowY) + sqr(relFlowZ));
-        const double q = 0.5 * airDensity * relSpeed * relSpeed;
-        const double projection = node.x * windDirX + node.y * windDirY;
-        const double windward = (maxProjection - projection) * invSpan;
-        const double pressureShape = 0.15 + 1.35 * windward * windward;
-        const double localPressure = q * pressureShape;
-        const double invSpeed = relSpeed > 1.0e-9 ? 1.0 / relSpeed : 0.0;
-
-        node.pressure = localPressure;
-        node.fx = dragCoefficient * localPressure * nodeArea * relFlowX * invSpeed;
-        node.fy = dragCoefficient * localPressure * nodeArea * relFlowY * invSpeed;
-        node.fz = dragCoefficient * localPressure * nodeArea * relFlowZ * invSpeed;
-
-        // СДВИГ
-        const double phi = bendingShape(node.relY);
-
-        /*
-        * Обобщенная сила изгиба:
-        *
-        * z_i = z0_i + bendQ * phi_i
-        *
-        * dz_i / d(bendQ) = phi_i
-        *
-        * Поэтому:
-        * Q = sum(Fz_i * phi_i)
-        */
-        lastBendingForce += node.fz * phi;
-        
-        // КРУЧЕНИЕ
+    for (auto& node : nodes) {
         const double phiB = bendingShape(node.relY);
         const double phiT = torsionShape(node.relY);
 
-        /*
-        * Обобщенная сила изгиба:
-        *
-        * z_i = z0_i + bendQ * phiB
-        * dz_i / d(bendQ) = phiB
-        */
-        lastBendingForce += node.fz * phiB;
+        const double theta = torsionQ * phiT;
+        const double wDot = bendQDot * phiB;
+        const double thetaDot = torsionQDot * phiT;
 
-        /*
-        * Обобщенный момент кручения.
-        *
-        * Для кручения вокруг оси Y:
-        *
-        * M_y = r_z * F_x - r_x * F_z
-        *
-        * где:
-        *   r_x = x - torsionAxisX
-        *   r_z = z - torsionAxisZ
-        *
-        * Так как локальный угол равен torsionQ * phiT,
-        * обобщенный момент:
-        *
-        * Q_torsion = sum(M_y * phiT)
-        */
-        const double rx = node.x - torsionAxisX;
-        const double rz = node.z - torsionAxisZ;
+        const double x0 = hingeX + node.relX;
+        const double xArm = x0 - torsionAxisX;
 
-        const double momentY = rz * node.fx - rx * node.fz;
+        double alphaEff =
+            theta + (-wDot + xArm * thetaDot) / U;
+
+        alphaEff = std::clamp(alphaEff,
+                              -maxAlphaEff,
+                               maxAlphaEff);
+
+        node.alphaEff = alphaEff;
+
+        double alphaUsed = alphaEff;
+
+        if (useAeroLag) {
+            const double beta =
+                std::clamp(tau / alphaLagTau, 0.0, 1.0);
+
+            node.alphaLag += beta * (alphaEff - node.alphaLag);
+
+            node.alphaLag = std::clamp(node.alphaLag,
+                                       -maxAlphaEff,
+                                        maxAlphaEff);
+
+            alphaUsed = node.alphaLag;
+        } else {
+            node.alphaLag = alphaEff;
+        }
+
+        const double cl = liftSlope * alphaUsed;
+        const double lift = qDyn * cl * nodeArea;
+
+        node.lift = lift;
+        node.pressure = qDyn * cl;
+
+        node.fx = 0.0;
+        node.fy = 0.0;
+        node.fz = lift;
+
+        lastBendingForce += lift * phiB;
+
+        const double torsionGain = 1.0;
+        const double momentArm = x0 - aeroCenterX;
+        const double momentY = +torsionGain * momentArm * lift;
 
         lastTorsionMoment += momentY * phiT;
     }
@@ -595,6 +594,12 @@ void CalcMesh::snapshot(unsigned int snap_number) {
     displacement->SetName("hinge_displacement");
     displacement->SetNumberOfComponents(3);
 
+    auto alphaEffArray = vtkSmartPointer<vtkDoubleArray>::New();
+    alphaEffArray->SetName("alpha_eff");
+
+    auto liftArray = vtkSmartPointer<vtkDoubleArray>::New();
+    liftArray->SetName("lift");
+
     for(unsigned int i = 0; i < nodes.size(); i++) {
         dumpPoints->InsertNextPoint(nodes[i].x, nodes[i].y, nodes[i].z);
         double _vel[3] = {nodes[i].vx, nodes[i].vy, nodes[i].vz};
@@ -603,13 +608,15 @@ void CalcMesh::snapshot(unsigned int snap_number) {
         double _displacement[3] = {
             nodes[i].x - (hingeX + nodes[i].relX),
             nodes[i].y - (hingeY + nodes[i].relY),
-            0.0
+            nodes[i].z - (hingeZ + nodes[i].relZ)
         };
         vel->InsertNextTuple(_vel);
         force->InsertNextTuple(_force);
         wind->InsertNextTuple(_wind);
         displacement->InsertNextTuple(_displacement);
         pressure->InsertNextValue(nodes[i].pressure);
+        alphaEffArray->InsertNextValue(nodes[i].alphaEff);
+        liftArray->InsertNextValue(nodes[i].lift);
     }
 
     unstructuredGrid->SetPoints(dumpPoints);
@@ -618,6 +625,8 @@ void CalcMesh::snapshot(unsigned int snap_number) {
     unstructuredGrid->GetPointData()->AddArray(wind);
     unstructuredGrid->GetPointData()->AddArray(displacement);
     unstructuredGrid->GetPointData()->AddArray(pressure);
+    unstructuredGrid->GetPointData()->AddArray(alphaEffArray);
+    unstructuredGrid->GetPointData()->AddArray(liftArray);
 
     for (std::size_t i = 0; i < elements.size(); ++i) {
         double stress = 0.0;
