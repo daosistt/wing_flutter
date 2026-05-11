@@ -188,16 +188,12 @@ $$
 
 ---
 
-## Effective Angle of Attack
+## Эффективный угол атаки
 
 Главный механизм флаттера реализован через эффективный угол атаки:
 
 $$
-\alpha_{eff}
-=
-\theta
-+
-\frac{-\dot w + x\dot\theta}{U}
+\alpha_{eff}=\theta+\frac{-\dot w + x\dot\theta}{U}
 $$
 
 Формула учитывает:
@@ -220,11 +216,7 @@ $$
 Для моделирования фазового запаздывания используется запаздывающая модель:
 
 $$ 
-\tau_a \dot\alpha_{lag}
-+
-\alpha_{lag}
-=
-\alpha_{eff}
+\tau_a \dot\alpha_{lag}+\alpha_{lag}=\alpha_{eff}
 $$
 
 Подъемная сила рассчитывается через запаздывающий угол:
@@ -335,9 +327,7 @@ $\tau = Gr\frac{d\theta}{dy}$
 Эквивалентное напряжение по Мизесу:
 
 $$
-\sigma_{eq}
-=
-\sqrt{\sigma^2 + 3\tau^2}
+\sigma_{eq}=\sqrt{\sigma^2 + 3\tau^2}
 $$
 
 Узловые напряжения вычисляются через усреднение по tetrahedral mesh.
