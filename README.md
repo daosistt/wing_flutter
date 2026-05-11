@@ -47,7 +47,9 @@
 
 Набегающий поток:
 
-$ \mathbf{U}_\infty = (U,0,0) $
+$$
+\mathbf{U}_\infty = (U,0,0)
+$$
 
 Корневая секция крыла жестко закреплена.
 
@@ -66,7 +68,9 @@ $ \mathbf{U}_\infty = (U,0,0) $
 
 Прогиб крыла:
 
-$ w(y,t) = q_b(t)\phi_b(y) $
+$$
+w(y,t) = q_b(t)\phi_b(y)
+$$
 
 где:
 
@@ -75,11 +79,13 @@ $ w(y,t) = q_b(t)\phi_b(y) $
 
 Консольная форма:
 
-$ \phi_b(\xi) = \xi^2(3 - 2\xi) $
+$$
+\phi_b(\xi) = \xi^2(3 - 2\xi)
+$$
 
 где:
 
-$ \xi = \frac{-y}{L} $
+$\xi = \frac{-y}{L}$
 
 ---
 
@@ -87,7 +93,9 @@ $ \xi = \frac{-y}{L} $
 
 Крутка крыла:
 
-$ \theta(y,t) = q_t(t)\phi_t(y) $
+$$
+\theta(y,t) = q_t(t)\phi_t(y) 
+$$
 
 где:
 
@@ -96,11 +104,11 @@ $ \theta(y,t) = q_t(t)\phi_t(y) $
 
 Текущая реализация:
 
-$ \phi_t(\xi) = \xi $
+$$\phi_t(\xi) = \xi$$
 
 или:
 
-$ \phi_t(\xi) = \xi^2 $
+$$\phi_t(\xi) = \xi^2$$
 
 ---
 
@@ -108,9 +116,9 @@ $ \phi_t(\xi) = \xi^2 $
 
 Кручение реализовано как линейная малоугловая ротация вокруг оси $Y$:
 
-$ x' = x + z\theta $
+$x' = x + z\theta$
 
-$ z' = z - x\theta $
+$z' = z - x\theta$
 
 Приближение справедливо для малых деформаций.
 
@@ -120,55 +128,63 @@ $ z' = z - x\theta $
 
 Система уравнений движения:
 
-$ M\ddot q + C\dot q + Kq = Q_{aero} $
+$$
+M\ddot q + C\dot q + Kq = Q_{aero}
+$$
 
 где:
 
-$ q =
+$$ 
+q =
 \begin{bmatrix}
 q_b \\
 q_t
 \end{bmatrix}
-$
+$$
 
 Используются диагональные reduced-order матрицы:
 
-$ M =
+$$ 
+M =
 \begin{bmatrix}
 m_b & 0 \\
 0 & I_t
 \end{bmatrix}
-$
+$$
 
-$ C =
+$$
+C =
 \begin{bmatrix}
 c_b & 0 \\
 0 & c_t
 \end{bmatrix}
-$
+$$
 
-$ K =
+$$
+K =
 \begin{bmatrix}
 k_b & 0 \\
 0 & k_t
 \end{bmatrix}
-$
+$$
 
 Интегрирование по времени:
 
-- semi-implicit Euler scheme
+- метод Эйлера
 
 ---
 
 # Аэродинамическая модель
 
-Используется quasi-steady аэродинамика.
+Используется квази-устойчивая аэродинамика.
 
 ---
 
 ## Динамическое давление
 
-$ q_\infty = \frac12 \rho U^2 $
+$$
+q_\infty = \frac12 \rho U^2 
+$$
 
 ---
 
@@ -176,7 +192,8 @@ $ q_\infty = \frac12 \rho U^2 $
 
 Главный механизм флаттера реализован через эффективный угол атаки:
 
-$$ \alpha_{eff}
+$$
+\alpha_{eff}
 =
 \theta
 +
@@ -200,9 +217,10 @@ $$
 
 ## Unsteady Aerodynamic Lag
 
-Для моделирования фазового запаздывания используется first-order lag model:
+Для моделирования фазового запаздывания используется запаздывающая модель:
 
-$$ \tau_a \dot\alpha_{lag}
+$$ 
+\tau_a \dot\alpha_{lag}
 +
 \alpha_{lag}
 =
@@ -211,7 +229,7 @@ $$
 
 Подъемная сила рассчитывается через запаздывающий угол:
 
-$ C_L = C_{L\alpha}\alpha_{lag} $
+$C_L = C_{L\alpha}\alpha_{lag}$
 
 Это позволяет моделировать:
 
@@ -226,7 +244,7 @@ $ C_L = C_{L\alpha}\alpha_{lag} $
 
 Локальная подъемная сила:
 
-$ L = q_\infty C_L A $
+$L = q_\infty C_L A$
 
 где:
 
@@ -238,7 +256,7 @@ $ L = q_\infty C_L A $
 
 Момент относительно оси кручения:
 
-$ M_y = -(x - x_{ac})L $
+$M_y = -(x - x_{ac})L$
 
 Именно этот момент связывает аэродинамику с torsion mode.
 
@@ -266,19 +284,19 @@ Effective angle of attack
 
 При малой скорости:
 
-$ C_{total} > 0 $
+$C_{total} > 0$
 
 Колебания затухают.
 
 Около критической скорости:
 
-$ C_{total} \approx 0 $
+$C_{total} \approx 0$
 
 Появляются устойчивые oscillations.
 
 Выше скорости флаттера:
 
-$ C_{total} < 0 $
+$C_{total} < 0$
 
 Амплитуда начинает расти.
 
@@ -292,7 +310,7 @@ $ C_{total} < 0 $
 
 ## Изгибные напряжения
 
-$ \sigma = Ez\kappa $
+$\sigma = Ez\kappa$
 
 где:
 
@@ -303,7 +321,7 @@ $ \sigma = Ez\kappa $
 
 ## Касательные напряжения при кручении
 
-$ \tau = Gr\frac{d\theta}{dy} $
+$\tau = Gr\frac{d\theta}{dy}$
 
 где:
 
@@ -316,7 +334,8 @@ $ \tau = Gr\frac{d\theta}{dy} $
 
 Эквивалентное напряжение по Мизесу:
 
-$$ \sigma_{eq}
+$$
+\sigma_{eq}
 =
 \sqrt{\sigma^2 + 3\tau^2}
 $$
