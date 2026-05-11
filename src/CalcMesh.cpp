@@ -1,8 +1,10 @@
 #include "CalcMesh.h"
+#include "CalcNode.h"
 #include <vtkDoubleArray.h>
 #include <vtkPoints.h>
 #include <vtkPointData.h>
 #include <vtkFieldData.h>
+#include <vtkCellData.h>
 #include <vtkTetra.h>
 #include <vtkXMLUnstructuredGridWriter.h>
 #include <vtkUnstructuredGrid.h>
@@ -37,7 +39,16 @@ CalcMesh::CalcMesh(const std::vector<double>& nodesCoords,
       lastBendingForce(0.0),
       wingSpanLength(1.0),
       wingRootY(0.0),
-      wingTipY(0.0)
+      wingTipY(0.0), 
+
+      torsionQ(0.0), torsionQDot(0.0), torsionQDDot(0.0),
+      torsionInertia(1.0), torsionDamping(0.05), torsionStiffness(5.0),
+      lastTorsionMoment(0.0),
+      torsionAxisX(0.0), torsionAxisZ(0.0),
+
+      youngModulus(70.0e9), shearModulus(26.0e9),
+      poissonRatio(0.33),
+      yieldStress(300.0e6), maxEquivalentStress(0.0)
     {
     nodes.resize(nodesCoords.size() / 3);
     for(unsigned int i = 0; i < nodesCoords.size() / 3; i++) {
@@ -68,6 +79,9 @@ CalcMesh::CalcMesh(const std::vector<double>& nodesCoords,
     wingRootY = hingeY;
     wingTipY = minY;
     wingSpanLength = std::max(wingRootY - wingTipY, 1.0e-9);
+
+    torsionAxisX = 0.5 * (minX + maxX);
+    torsionAxisZ = hingeZ;
 
     for (auto& node : nodes) {
         node.relX = node.x - hingeX;
@@ -109,12 +123,9 @@ void CalcMesh::doTimeStep(double tau) {
     updateAerodynamicFields();
 
     /*
-     * 2. Уравнение одной изгибной степени свободы:
+     * 2. Изгиб:
      *
-     * bendMass * bendQDDot
-     * + bendDamping * bendQDot
-     * + bendStiffness * bendQ
-     * = lastBendingForce
+     * M_b*q_b'' + C_b*q_b' + K_b*q_b = Q_b
      */
     bendQDDot =
         (lastBendingForce
@@ -123,25 +134,41 @@ void CalcMesh::doTimeStep(double tau) {
         / bendMass;
 
     /*
-     * 3. Semi-implicit Euler:
+     * 3. Кручение:
      *
-     * Сначала обновляем скорость,
-     * потом положение.
-     *
-     * Это устойчивее обычного явного Эйлера.
+     * I_t*q_t'' + C_t*q_t' + K_t*q_t = M_t
+     */
+    torsionQDDot =
+        (lastTorsionMoment
+         - torsionDamping * torsionQDot
+         - torsionStiffness * torsionQ)
+        / torsionInertia;
+
+    /*
+     * 4. Semi-implicit Euler.
      */
     bendQDot += bendQDDot * tau;
     bendQ    += bendQDot  * tau;
 
+    torsionQDot += torsionQDDot * tau;
+    torsionQ    += torsionQDot  * tau;
+
     /*
-     * 4. Обновляем координаты узлов по новой амплитуде изгиба.
+     * 5. Обновляем координаты узлов.
      */
     updateKinematics();
 
     /*
-     * 5. Пересчитываем силы для записи в VTK на новом положении.
+     * 6. Пересчитываем поля для записи в VTK.
      */
     updateAerodynamicFields();
+
+    /*
+     * 6. Пересчитываем напряжения в тетраэдрах
+     */
+    updateStressFields();
+
+currentTime += tau;
 
     currentTime += tau;
 }
@@ -186,6 +213,41 @@ void CalcMesh::configureWingBending(double initialBend,
     updateAerodynamicFields();
 }
 
+void CalcMesh::configureWingTorsion(double initialTorsion,
+                                    double initialTorsionVelocity,
+                                    double torsionInertiaValue,
+                                    double torsionStiffnessValue,
+                                    double torsionDampingValue) {
+    torsionQ = initialTorsion;
+    torsionQDot = initialTorsionVelocity;
+    torsionQDDot = 0.0;
+
+    torsionInertia = std::max(torsionInertiaValue, 1.0e-9);
+    torsionStiffness = std::max(torsionStiffnessValue, 0.0);
+    torsionDamping = std::max(torsionDampingValue, 0.0);
+
+    lastTorsionMoment = 0.0;
+
+    updateKinematics();
+    updateAerodynamicFields();
+}
+
+void CalcMesh::configureWingMaterial(double youngModulusValue,
+                                     double poissonRatioValue,
+                                     double yieldStressValue) {
+    youngModulus = std::max(youngModulusValue, 1.0);
+    poissonRatio = std::clamp(poissonRatioValue, 0.0, 0.49);
+
+    shearModulus =
+        youngModulus / (2.0 * (1.0 + poissonRatio));
+
+    yieldStress = std::max(yieldStressValue, 1.0);
+
+    maxEquivalentStress = 0.0;
+
+    updateStressFields();
+}
+
 double CalcMesh::bendingShape(double relY) const {
     /*
      * relY = node.y0 - hingeY.
@@ -212,39 +274,198 @@ double CalcMesh::bendingShape(double relY) const {
     return xi * xi * (3.0 - 2.0 * xi);
 }
 
+double CalcMesh::torsionShape(double relY) const {
+    /*
+     * relY = y0 - hingeY.
+     *
+     * Корень крыла:
+     *   relY = 0
+     *   xi = 0
+     *
+     * Свободный конец:
+     *   relY = -wingSpanLength
+     *   xi = 1
+     */
+
+    double xi = -relY / wingSpanLength;
+    xi = std::clamp(xi, 0.0, 1.0);
+
+    /*
+     * Линейная крутильная форма:
+     *
+     * psi(0) = 0  - у закрепления нет закрутки
+     * psi(1) = 1  - torsionQ равен углу свободного конца
+     *
+     * Для первого шага линейная форма лучше кубической:
+     * кручение обычно распределяется примерно линейно вдоль консоли.
+     */
+    return xi;
+}
+
+double CalcMesh::bendingShapeSecondDerivative(double relY) const {
+    double xi = -relY / wingSpanLength;
+    xi = std::clamp(xi, 0.0, 1.0);
+
+    return (6.0 - 12.0 * xi) / (wingSpanLength * wingSpanLength);
+}
+
+double CalcMesh::torsionShapeDerivative(double relY) const {
+    double xi = -relY / wingSpanLength;
+
+    if (xi < 0.0 || xi > 1.0) {
+        return 0.0;
+    }
+
+    return -1.0 / wingSpanLength;
+}
+
+void CalcMesh::updateStressFields() {
+    elementEquivalentStress.assign(elements.size(), 0.0);
+    maxEquivalentStress = 0.0;
+
+    for (std::size_t elementIndex = 0; elementIndex < elements.size(); ++elementIndex) {
+        const Element& element = elements[elementIndex];
+
+        const CalcNode& n0 = nodes[element.nodesIds[0]];
+        const CalcNode& n1 = nodes[element.nodesIds[1]];
+        const CalcNode& n2 = nodes[element.nodesIds[2]];
+        const CalcNode& n3 = nodes[element.nodesIds[3]];
+
+        /*
+         * Центр тетраэдра в текущей деформированной конфигурации.
+         */
+        const double centerX =
+            0.25 * (n0.x + n1.x + n2.x + n3.x);
+
+        const double centerY =
+            0.25 * (n0.y + n1.y + n2.y + n3.y);
+
+        const double centerZ =
+            0.25 * (n0.z + n1.z + n2.z + n3.z);
+
+        /*
+         * Координата вдоль крыла относительно закрепления.
+         */
+        const double relY =
+            centerY - hingeY;
+
+        /*
+         * Координаты относительно оси кручения.
+         */
+        const double relToTorsionAxisX =
+            centerX - torsionAxisX;
+
+        const double relToTorsionAxisZ =
+            centerZ - torsionAxisZ;
+
+        /*
+         * Напряжение от изгиба:
+         *
+         * w(y) = bendQ * phi(y)
+         * curvature = d2w/dy2 = bendQ * d2phi/dy2
+         *
+         * sigma = E * z * curvature
+         */
+        const double curvature =
+            bendQ * bendingShapeSecondDerivative(relY);
+
+        const double sigmaBending =
+            youngModulus * relToTorsionAxisZ * curvature;
+
+        /*
+         * Напряжение от кручения:
+         *
+         * theta(y) = torsionQ * psi(y)
+         * thetaDerivative = dtheta/dy
+         *
+         * tau = G * r * dtheta/dy
+         */
+        const double thetaDerivative =
+            torsionQ * torsionShapeDerivative(relY);
+
+        const double radiusFromTorsionAxis =
+            std::sqrt(
+                relToTorsionAxisX * relToTorsionAxisX +
+                relToTorsionAxisZ * relToTorsionAxisZ
+            );
+
+        const double tauTorsion =
+            shearModulus * radiusFromTorsionAxis * thetaDerivative;
+
+        /*
+         * Эквивалентное напряжение von Mises
+         * для комбинации нормального и касательного напряжения.
+         */
+        const double equivalentStress =
+            std::sqrt(
+                sigmaBending * sigmaBending +
+                3.0 * tauTorsion * tauTorsion
+            );
+
+        elementEquivalentStress[elementIndex] = equivalentStress;
+
+        maxEquivalentStress =
+            std::max(maxEquivalentStress, equivalentStress);
+    }
+}
+
 void CalcMesh::updateKinematics() {
     com.centerX = 0.0;
     com.centerY = 0.0;
     com.centerZ = 0.0;
 
     for (auto& node : nodes) {
-        const double phi = bendingShape(node.relY);
+        const double phiB = bendingShape(node.relY);
+        const double phiT = torsionShape(node.relY);
 
         /*
-         * X не меняем:
-         * вдоль X дует ветер.
+         * Исходные координаты узла.
          */
-        node.x = hingeX + node.relX;
+        const double x0 = hingeX + node.relX;
+        const double y0 = hingeY + node.relY;
+        const double z0 = hingeZ + node.relZ;
 
         /*
-         * Y не меняем:
-         * вдоль Y расположен размах крыла.
+         * Изгиб по Z.
          */
-        node.y = hingeY + node.relY;
+        const double bendingDz = bendQ * phiB;
+        const double bendingVz = bendQDot * phiB;
 
         /*
-         * Z меняем:
-         * это вертикальный изгиб крыла.
+         * Локальный угол кручения данного сечения.
          */
-        node.z = hingeZ + node.relZ + bendQ * phi;
+        const double theta = torsionQ * phiT;
+        const double thetaDot = torsionQDot * phiT;
 
         /*
-         * Скорость узла появляется только по Z,
-         * потому что bendQ зависит от времени.
+         * Координаты относительно оси кручения.
+         *
+         * Кручение идет вокруг оси Y.
          */
-        node.vx = 0.0;
+        const double dx = x0 - torsionAxisX;
+        const double dz = z0 - torsionAxisZ;
+
+        /*
+         * Малый поворот вокруг оси Y:
+         *
+         * x' = x + dz * theta
+         * z' = z - dx * theta
+         *
+         * Плюс изгиб добавляется в z.
+         */
+        node.x = x0 + dz * theta;
+        node.y = y0;
+        node.z = z0 + bendingDz - dx * theta;
+
+        /*
+         * Скорости узлов:
+         *
+         * vx = dz * thetaDot
+         * vz = bendingVz - dx * thetaDot
+         */
+        node.vx = dz * thetaDot;
         node.vy = 0.0;
-        node.vz = bendQDot * phi;
+        node.vz = bendingVz - dx * thetaDot;
 
         com.centerX += node.x;
         com.centerY += node.y;
@@ -261,6 +482,7 @@ void CalcMesh::updateKinematics() {
 void CalcMesh::updateAerodynamicFields() {
     lastTorque = 0.0;
     lastBendingForce = 0.0;
+    lastTorsionMoment = 0.0;
 
     const double windNorm = std::sqrt(sqr(windVx) + sqr(windVy) + sqr(windVz));
     const double windDirX = windNorm > 1.0e-9 ? windVx / windNorm : 0.0;
@@ -291,6 +513,7 @@ void CalcMesh::updateAerodynamicFields() {
         node.fy = dragCoefficient * localPressure * nodeArea * relFlowY * invSpeed;
         node.fz = dragCoefficient * localPressure * nodeArea * relFlowZ * invSpeed;
 
+        // СДВИГ
         const double phi = bendingShape(node.relY);
 
         /*
@@ -304,11 +527,41 @@ void CalcMesh::updateAerodynamicFields() {
         * Q = sum(Fz_i * phi_i)
         */
         lastBendingForce += node.fz * phi;
+        
+        // КРУЧЕНИЕ
+        const double phiB = bendingShape(node.relY);
+        const double phiT = torsionShape(node.relY);
 
-        const double rx = node.x - hingeX;
-        const double ry = node.y - hingeY;
-        lastTorque += rx * node.fy - ry * node.fx;
-        node.smth = node.pressure;
+        /*
+        * Обобщенная сила изгиба:
+        *
+        * z_i = z0_i + bendQ * phiB
+        * dz_i / d(bendQ) = phiB
+        */
+        lastBendingForce += node.fz * phiB;
+
+        /*
+        * Обобщенный момент кручения.
+        *
+        * Для кручения вокруг оси Y:
+        *
+        * M_y = r_z * F_x - r_x * F_z
+        *
+        * где:
+        *   r_x = x - torsionAxisX
+        *   r_z = z - torsionAxisZ
+        *
+        * Так как локальный угол равен torsionQ * phiT,
+        * обобщенный момент:
+        *
+        * Q_torsion = sum(M_y * phiT)
+        */
+        const double rx = node.x - torsionAxisX;
+        const double rz = node.z - torsionAxisZ;
+
+        const double momentY = rz * node.fx - rx * node.fz;
+
+        lastTorsionMoment += momentY * phiT;
     }
 }
 
@@ -320,6 +573,11 @@ void CalcMesh::snapshot(unsigned int snap_number) {
 
     auto pressure = vtkSmartPointer<vtkDoubleArray>::New();
     pressure->SetName("pressure");
+    
+    auto stressArray = vtkSmartPointer<vtkDoubleArray>::New();
+    stressArray->SetName("equivalent_stress");
+    stressArray->SetNumberOfComponents(1);
+    stressArray->SetNumberOfTuples(elements.size());
 
     auto vel = vtkSmartPointer<vtkDoubleArray>::New();
     vel->SetName("velocity");
@@ -360,6 +618,18 @@ void CalcMesh::snapshot(unsigned int snap_number) {
     unstructuredGrid->GetPointData()->AddArray(wind);
     unstructuredGrid->GetPointData()->AddArray(displacement);
     unstructuredGrid->GetPointData()->AddArray(pressure);
+
+    for (std::size_t i = 0; i < elements.size(); ++i) {
+        double stress = 0.0;
+
+        if (i < elementEquivalentStress.size()) {
+            stress = elementEquivalentStress[i];
+        }
+
+        stressArray->SetValue(i, stress);
+    }
+
+    unstructuredGrid->GetCellData()->AddArray(stressArray);
 
     auto timeArray = vtkSmartPointer<vtkDoubleArray>::New();
     timeArray->SetName("time");

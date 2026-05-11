@@ -62,9 +62,10 @@ int main() {
     // The wind is directed along +Y, perpendicular to the initial major axis.
     // The body is hinged at the rightmost point of the major semi-axis and
     // rotates in the XY plane around the Z axis.
-    const double windVx = 8.0;
+    // ВЕТЕР
+    const double windVx = 10.0;
     const double windVy = 0.0;
-    const double windVz = 8.0;
+    const double windVz = 3.0;
     const double initialAngle = 0.0;
     const double airDensity = 1.225;
     const double dragCoefficient = 1.15;
@@ -72,11 +73,12 @@ int main() {
     mesh.configureWindFlutter(windVx, windVy, windVz, initialAngle,
                               airDensity, dragCoefficient, angularDamping);
 
+    // СДВИГ
     const double initialBend = 0.0;
     const double initialBendVelocity = 0.0;
 
     const double bendMass = 0.25;
-    const double bendStiffness = 20.0;
+    const double bendStiffness = 75.0;
     const double bendDamping = 0.2;
 
     mesh.configureWingBending(initialBend,
@@ -84,6 +86,29 @@ int main() {
                               bendMass,
                               bendStiffness,
                               bendDamping);
+    // КРУЧЕНИЕ
+    const double initialTorsion = 0.0;
+    const double initialTorsionVelocity = 0.0;
+
+    const double torsionInertia = 0.05;
+    const double torsionStiffness = 80.0;
+    const double torsionDamping = 1.5;
+
+    mesh.configureWingTorsion(initialTorsion,
+                            initialTorsionVelocity,
+                            torsionInertia,
+                            torsionStiffness,
+                            torsionDamping);
+
+    // МАТЕРИАЛ
+    const double youngModulus = 70.0e9;    // Па, алюминий
+    const double poissonRatio = 0.33;      // безразмерный
+    const double yieldStress = 300.0e6;    // Па
+
+    mesh.configureWingMaterial(youngModulus,
+                            poissonRatio,
+                            yieldStress);
+
 
     mesh.snapshot(0);
     const double tau = 0.01;

@@ -44,6 +44,7 @@ class CalcMesh {
   protected:
     std::vector<CalcNode> nodes;    /**< Узлы сетки с их состоянием */
     std::vector<Element> elements;  /**< Тетраэдральные элементы */
+    std::vector<double> elementEquivalentStress; /**< Эквивалентное напряжение von Mises для каждого тетраэдра */
     double currentTime;             /**< Текущее время моделирования */
 
     CenterOfMass com;               /**< Состояние центра масс */
@@ -71,8 +72,28 @@ class CalcMesh {
     double wingRootY;          /**< Координата закрепленного корня крыла по оси Y */
     double wingTipY;           /**< Координата свободного конца крыла по оси Y */
 
+    double torsionQ;              /**< q - Обобщенная координата кручения: угол закрутки свободного конца крыла вокруг оси Y, рад */
+    double torsionQDot;           /**< q' - Обобщенная скорость кручения: скорость изменения torsionQ, рад/с */
+    double torsionQDDot;          /**< q'' - Обобщенное ускорение кручения: ускорение изменения torsionQ, рад/с^2 */
+    double torsionInertia;        /**< It - Эффективный момент инерции крутильной формы относительно оси Y */
+    double torsionDamping;        /**< C_t - Коэффициент механического демпфирования кручения, входит в член C_torsion*qDot */
+    double torsionStiffness;      /**< K_t - Крутильная жесткость крыла, входит в член K_torsion*q */
+    double lastTorsionMoment;     /**< M_t -  Последний вычисленный обобщенный аэродинамический момент кручения */
+    double torsionAxisX;          /**< Координата оси кручения по X, вокруг которой поворачивается сечение крыла */
+    double torsionAxisZ;          /**< Координата оси кручения по Z в недеформированном состоянии */
+
+    double youngModulus;          /**< E - Модуль Юнга материала крыла E, Па */
+    double shearModulus;          /**< G - Модуль сдвига материала крыла G, Па */
+    double poissonRatio;          /**< Коэффициент Пуассона материала крыла */
+    double yieldStress;           /**< Условный предел прочности/текучести материала, Па */
+    double maxEquivalentStress;   /**< Максимальное эквивалентное напряжение по крылу на текущем шаге, Па */
+
     void updateKinematics();
     void updateAerodynamicFields();
+
+    double bendingShapeSecondDerivative(double relY) const; /**< Вторая производная формы изгиба по Y */
+    double torsionShapeDerivative(double relY) const;       /**< Первая производная формы кручения по Y */
+    void updateStressFields();                              /**< Расчет напряжений от изгиба и кручения */
 
   public:
     /**
@@ -126,13 +147,37 @@ class CalcMesh {
      * @bendDampingValue: демпфирование
      */
     void configureWingBending(double initialBend,
-                          double initialBendVelocity,
-                          double bendMassValue,
-                          double bendStiffnessValue,
-                          double bendDampingValue);
+                              double initialBendVelocity,
+                              double bendMassValue,
+                              double bendStiffnessValue,
+                              double bendDampingValue);
 
-      /**< Функция формы изгиба крыла вдоль оси Y */
-      double bendingShape(double relY) const; 
+                      
+    /**
+     * @initialTorsion: начальный сдвиг
+     * @initialTorsionVelocity: начальная скорость сдвига
+     * @torsionInertiaValue: инерция
+     * @torsionStiffnessValue: жесткость
+     * @torsionDampingValue: демпфирование
+     */
+    void configureWingTorsion(double initialTorsion,
+                                        double initialTorsionVelocity,
+                                        double torsionInertiaValue,
+                                        double torsionStiffnessValue,
+                                        double torsionDampingValue);
+
+    /**
+     * configureWingMaterial - конфигурация материала крыла
+     */
+    void configureWingMaterial(double youngModulusValue,
+                           double poissonRatioValue,
+                           double yieldStressValue);
+
+    /**< Функция формы изгиба крыла вдоль оси Y */
+    double bendingShape(double relY) const;
+
+    /**< Функция формы кручения крыла вокруг оси Y */
+    double torsionShape(double relY) const; 
 
     /**
      * updateCenterOfMass - Пересчитать положение центра масс
